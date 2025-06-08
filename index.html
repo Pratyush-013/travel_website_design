@@ -153,6 +153,10 @@
         let steps = []; // Stores the state of the tree at each step
         let currentStepIndex = -1; // Current step being displayed
 
+        // Global map to store all created nodes with their original references.
+        // This is crucial for reconstructing the full tree structure at each step.
+        const allNodesMap = new Map(); // id -> HuffmanNode object
+
         // Node class for Huffman tree
         class HuffmanNode {
             constructor(char, freq, left = null, right = null, id = null) {
@@ -173,28 +177,35 @@
                 if (a.freq !== b.freq) {
                     return a.freq - b.freq;
                 }
-                // Sort by character for tie-breaking, treat internal nodes (null char) last
+                // For tie-breaking, sort by character (internal nodes with null char come after actual characters)
                 if (a.char === null && b.char !== null) return 1;
                 if (a.char !== null && b.char === null) return -1;
-                if (a.char === null && b.char === null) return 0; // Both internal, order doesn't matter much
+                if (a.char === null && b.char === null) return 0; // Both internal, their relative order doesn't impact tree shape for sorting
                 return a.char.localeCompare(b.char);
             });
         }
 
         // Function to build the Huffman tree step by step
         function buildHuffmanTreeSteps() {
+            // Clear previous state
+            allNodesMap.clear();
+            steps = [];
+            let nodeIdCounter = 0; // Start ID counter from 0 for all nodes
+
+            // Initialize leaf nodes and add them to the global map
             let nodes = initialFrequencies
-                .map((item, index) => new HuffmanNode(item.char, item.freq, null, null, `node-${index}`))
+                .map(item => {
+                    const node = new HuffmanNode(item.char, item.freq, null, null, `node-${nodeIdCounter++}`);
+                    allNodesMap.set(node.id, node);
+                    return node;
+                })
                 .sort((a, b) => a.freq - b.freq); // Initial sort by frequency
 
-            steps = [];
-            let nodeIdCounter = nodes.length; // Counter for new internal node IDs
-
-            // Store initial state (all individual nodes)
+            // Store initial state (all individual nodes' IDs)
             steps.push({
-                tree: JSON.parse(JSON.stringify(nodes)), // Deep copy nodes
+                activeNodeIds: nodes.map(node => node.id), // Store IDs of nodes currently considered 'roots'
                 message: 'Initial nodes sorted by frequency.',
-                highlighted: [], // No nodes highlighted initially
+                highlighted: [],
                 combinedNodes: []
             });
 
@@ -204,23 +215,24 @@
                 const node1 = nodes.shift();
                 const node2 = nodes.shift();
 
-                // Create a new parent node
+                // Create a new parent node. Children are direct references to existing nodes.
                 const newNode = new HuffmanNode(
                     null, // Internal nodes don't have a specific character
                     node1.freq + node2.freq,
-                    node1,
-                    node2,
+                    node1, // Reference to the actual node1 object
+                    node2, // Reference to the actual node2 object
                     `node-${nodeIdCounter++}`
                 );
 
-                // Add the new node back to the array and re-sort
+                allNodesMap.set(newNode.id, newNode); // Add new node to the global map
+
                 nodes.push(newNode);
                 nodes = sortNodes(nodes); // Re-sort after adding the new node
 
-                // Store the state for the current step
+                // Store the state for the current step (IDs of active roots, highlighted/combined)
                 steps.push({
-                    tree: JSON.parse(JSON.stringify(nodes)), // Deep copy the current list of 'root' nodes
-                    message: `Merged '${node1.char || 'internal'}' (${node1.freq}) and '${node2.char || 'internal'}' (${node2.freq}) to form a new node with frequency ${newNode.freq}.`,
+                    activeNodeIds: nodes.map(node => node.id),
+                    message: `Merged '${node1.char || node1.freq}' (${node1.freq}) and '${node2.char || node2.freq}' (${node2.freq}) to form a new node with frequency ${newNode.freq}.`,
                     highlighted: [node1.id, node2.id], // Highlight the nodes that were just merged
                     combinedNodes: [newNode.id] // Highlight the newly formed node
                 });
@@ -229,7 +241,7 @@
             // The final step is the complete tree
             if (nodes.length === 1) {
                 steps.push({
-                    tree: JSON.parse(JSON.stringify(nodes)), // Deep copy the final root
+                    activeNodeIds: nodes.map(node => node.id), // ID of the final root
                     message: 'Huffman tree construction complete!',
                     highlighted: [],
                     combinedNodes: []
@@ -237,44 +249,101 @@
             }
         }
 
-        // Function to calculate node positions for drawing
+        // Function to reconstruct the actual HuffmanNode objects for drawing a given step
+        // This creates a temporary graph of connected nodes specifically for the drawing pass.
+        function reconstructTreeForStep(activeNodeIds) {
+            const nodesForDrawing = new Map(); // id -> new HuffmanNode instance for this drawing pass
+
+            // Helper to recursively create a drawable node and its children
+            function createDrawableNode(originalNodeId) {
+                if (!originalNodeId) return null; // Base case for no child
+                if (nodesForDrawing.has(originalNodeId)) {
+                    return nodesForDrawing.get(originalNodeId); // Already created for this pass
+                }
+
+                const originalNode = allNodesMap.get(originalNodeId);
+                if (!originalNode) {
+                    console.error(`Original node with ID ${originalNodeId} not found in map.`);
+                    return null;
+                }
+
+                // Create a new instance for drawing, copy relevant properties
+                const drawableNode = new HuffmanNode(
+                    originalNode.char,
+                    originalNode.freq,
+                    null, // Will set children after they are created
+                    null,
+                    originalNode.id // Keep the original ID for highlighting
+                );
+                nodesForDrawing.set(originalNode.id, drawableNode); // Add to map for current pass
+
+                // Recursively set children using their IDs to resolve actual node objects
+                drawableNode.left = createDrawableNode(originalNode.left ? originalNode.left.id : null);
+                drawableNode.right = createDrawableNode(originalNode.right ? originalNode.right.id : null);
+
+                return drawableNode;
+            }
+
+            // Start reconstruction from the active roots of the current step
+            const currentRootsForDrawing = [];
+            activeNodeIds.forEach(id => {
+                const rootNode = createDrawableNode(id);
+                if (rootNode) {
+                    currentRootsForDrawing.push(rootNode);
+                }
+            });
+
+            // Return a flattened list of all nodes that are part of these reconstructed trees
+            const flattenedNodes = [];
+            nodesForDrawing.forEach(node => flattenedNodes.push(node));
+            return flattenedNodes;
+        }
+
+
+        // Function to calculate node positions for drawing (upside down tree)
         function calculateNodePositions(nodes) {
             const canvasWidth = canvas.width;
             const canvasHeight = canvas.height;
             const nodeRadius = 25;
-            const horizontalSpacing = 60; // Min space between sibling nodes
+            const horizontalSpacing = 50; // Min space between sibling nodes or initial leaf nodes
             const verticalSpacing = 70; // Space between levels
 
             // 1. Assign levels to all nodes based on their current "roots"
             let maxLevel = 0;
-            const visited = new Set();
-            const queue = [];
+            const visitedForLevel = new Set();
+            const queueForLevel = [];
 
             // Identify all nodes that are currently 'roots' in the conceptual forest
             const currentRoots = nodes.filter(node => {
-                // A node is a root if it's not a child of any other node in the *current set of active nodes*
-                return !nodes.some(otherNode => (otherNode.left && otherNode.left.id === node.id) || (otherNode.right && otherNode.right.id === node.id));
+                let isChild = false;
+                for (const otherNode of nodes) {
+                    if ((otherNode.left && otherNode.left.id === node.id) || (otherNode.right && otherNode.right.id === node.id)) {
+                        isChild = true;
+                        break;
+                    }
+                }
+                return !isChild;
             });
 
             currentRoots.forEach(root => {
                 root.level = 0;
-                queue.push(root);
-                visited.add(root.id);
+                queueForLevel.push(root);
+                visitedForLevel.add(root.id);
             });
 
-            while (queue.length > 0) {
-                const node = queue.shift();
+            while (queueForLevel.length > 0) {
+                const node = queueForLevel.shift();
                 maxLevel = Math.max(maxLevel, node.level);
 
-                if (node.left && !visited.has(node.left.id)) {
+                if (node.left && !visitedForLevel.has(node.left.id)) {
                     node.left.level = node.level + 1;
-                    queue.push(node.left);
-                    visited.add(node.left.id);
+                    queueForLevel.push(node.left);
+                    visitedForLevel.add(node.left.id);
                 }
-                if (node.right && !visited.has(node.right.id)) {
+                if (node.right && !visitedForLevel.has(node.right.id)) {
                     node.right.level = node.level + 1;
-                    queue.push(node.right);
-                    visited.add(node.right.id);
+                    queueForLevel.push(node.right);
+                    visitedForLevel.add(node.right.id);
                 }
             }
 
@@ -307,14 +376,28 @@
             }
 
             // Apply assignXPositions to each independent root in the current forest
-            currentRoots.forEach(root => {
+            // Sort roots by their (potential) leftmost leaf's X position to maintain overall order
+            currentRoots.sort((a, b) => {
+                // A very simplified sort to maintain order for multiple initial trees
+                // This could be improved with a more robust tree sorting algorithm if necessary
+                return a.char?.localeCompare(b.char) || a.freq - b.freq;
+            }).forEach(root => {
+                 // Reset globalNextLeafX for each independent tree to prevent large gaps
+                 // This is a common strategy for laying out multiple distinct trees side-by-side
+                 // We need to calculate its starting position dynamically or based on cumulative widths.
+                 // For now, let's just make sure it keeps incrementing to ensure separation.
+                 if (globalNextLeafX < (nodeRadius + horizontalSpacing)) { // If it was reset to 0 or very small
+                     globalNextLeafX = nodeRadius + horizontalSpacing;
+                 } else { // Add some padding between trees
+                     globalNextLeafX += nodeRadius * 2;
+                 }
                 assignXPositions(root);
             });
 
 
             // 3. Assign Y positions (upside down)
             nodes.forEach(node => {
-                node.y = (node.level * verticalSpacing) + nodeRadius + 40; // Start lower down to give space at the top
+                node.y = (node.level * verticalSpacing) + nodeRadius + 40; // Position from top down, adding initial padding
             });
 
             // 4. Center the entire layout horizontally
@@ -326,6 +409,7 @@
             });
 
             const treeWidth = maxX - minX;
+            // Ensure trees are not too far to the left or right, add some base padding
             const offsetX = (canvasWidth - treeWidth) / 2 - minX;
 
             nodes.forEach(node => {
@@ -340,7 +424,7 @@
 
             if (nodes.length === 0) return;
 
-            // Recalculate positions for current step
+            // Recalculate positions for current step (this will update x, y, level properties on nodes)
             calculateNodePositions(nodes);
 
             // Draw lines first (parent to children)
@@ -377,8 +461,7 @@
                     }
                 }
             });
-
-            // Draw nodes
+// Draw nodes
             nodes.forEach(node => {
                 const isHighlighted = highlightedNodes.includes(node.id);
                 const isCombined = combinedNodes.includes(node.id);
@@ -412,25 +495,8 @@
         function renderStep() {
             if (currentStepIndex >= 0 && currentStepIndex < steps.length) {
                 const currentStep = steps[currentStepIndex];
-                const nodesToDraw = [];
-
-                // Create a flattened list of all nodes relevant to the current step's tree(s)
-                const queue = [...currentStep.tree];
-                const seenNodes = new Set();
-                while (queue.length > 0) {
-                    const node = queue.shift();
-                    // Check if the node is valid and not already processed
-                    if (node && node.id && !seenNodes.has(node.id)) {
-                        seenNodes.add(node.id);
-                        nodesToDraw.push(node);
-                        if (node.left) {
-                            queue.push(node.left);
-                        }
-                        if (node.right) {
-                            queue.push(node.right);
-                        }
-                    }
-                }
+                // Reconstruct the tree structure for drawing based on the active nodes in this step
+                const nodesToDraw = reconstructTreeForStep(currentStep.activeNodeIds);
 
                 stepInfoElement.innerHTML = currentStep.message;
                 drawTree(nodesToDraw, currentStep.highlighted, currentStep.combinedNodes);
@@ -465,7 +531,8 @@
 
         resetBtn.addEventListener('click', () => {
             currentStepIndex = -1; // Go back to before the first step
-            buildHuffmanTreeSteps(); // Rebuild steps to ensure fresh start
+            // Rebuild steps to ensure fresh start, clearing allNodesMap
+            buildHuffmanTreeSteps();
             renderStep();
         });
 
@@ -476,8 +543,8 @@
             canvas.width = containerWidth > 1000 ? 1000 : containerWidth - 30; // Max 1000px, or container width
             canvas.height = Math.min(window.innerHeight * 0.85, 700); // Max 85% of viewport height, or 700px
 
-            buildHuffmanTreeSteps();
-            renderStep();
+            buildHuffmanTreeSteps(); // Initial construction
+            renderStep(); // Render the first step (or initial state)
         };
 
         // Handle window resize
@@ -488,4 +555,7 @@
             renderStep(); // Redraw tree on resize
         });
 
-    
+    </script>
+</body>
+</html>
+       
