@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Huffman Tree Visualization</title>
+    <title>Simple Huffman Tree</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -35,7 +35,7 @@
             display: block;
             width: 100%; /* Make canvas responsive */
             height: auto; /* Maintain aspect ratio */
-            max-height: 80vh; /* Increased max canvas height */
+            max-height: 85vh; /* Increased max canvas height */
         }
         .controls {
             display: flex;
@@ -82,42 +82,6 @@
             text-align: center;
             min-height: 2.5rem; /* Reserve space to prevent layout shifts */
         }
-        .node-circle {
-            fill: #60a5fa; /* Blue for circles */
-            stroke: #3b82f6;
-            stroke-width: 2;
-        }
-        .node-text {
-            font-size: 14px;
-            fill: white;
-            text-anchor: middle;
-            alignment-baseline: central;
-        }
-        .label-text {
-            font-size: 12px;
-            fill: #334155;
-            text-anchor: middle;
-            alignment-baseline: central;
-        }
-        .line {
-            stroke: #64748b; /* Gray for lines */
-            stroke-width: 2;
-        }
-        .current-nodes-highlight {
-            font-weight: bold;
-            color: #059669; /* Green for highlighting active nodes */
-        }
-
-        /* Responsive adjustments */
-        @media (min-width: 768px) {
-            .container {
-                max-width: 900px; /* Wider on desktop */
-                padding: 2rem;
-            }
-            .controls {
-                flex-wrap: nowrap; /* Keep controls in a single row on desktop */
-            }
-        }
     </style>
 </head>
 <body>
@@ -141,7 +105,7 @@
         const nextBtn = document.getElementById('nextBtn');
         const resetBtn = document.getElementById('resetBtn');
 
-        // Initial character frequencies based on your provided image
+        // Initial character frequencies
         const initialFrequencies = [
             { char: 'A', freq: 4 },
             { char: 'B', freq: 7 },
@@ -153,6 +117,10 @@
         let steps = []; // Stores the state of the tree at each step
         let currentStepIndex = -1; // Current step being displayed
 
+        // Global map to store all created nodes with their original references.
+        // This ensures consistent node IDs and structure across steps.
+        const allNodesMap = new Map(); // id -> HuffmanNode object
+
         // Node class for Huffman tree
         class HuffmanNode {
             constructor(char, freq, left = null, right = null, id = null) {
@@ -163,7 +131,7 @@
                 this.id = id; // Unique ID for each node
                 this.x = 0; // X coordinate for drawing
                 this.y = 0; // Y coordinate for drawing
-                this.level = 0; // Level in the tree for vertical positioning
+                this.level = 0; // Level in the tree for vertical positioning (0 for leaves, increasing upwards)
             }
         }
 
@@ -173,82 +141,69 @@
                 if (a.freq !== b.freq) {
                     return a.freq - b.freq;
                 }
-                // Sort by character for tie-breaking, internal nodes (null char) treated last
-                if (a.char === null && b.char !== null) return 1;
-                if (a.char !== null && b.char === null) return -1;
-                if (a.char === null && b.char === null) return 0; // Both internal, order doesn't matter much
-                return a.char.localeCompare(b.char);
+                // Tie-breaking: characters first, then internal nodes, alphabetically
+                if (a.char && b.char) return a.char.localeCompare(b.char);
+                if (a.char) return -1; // 'A' comes before null (internal node)
+                if (b.char) return 1;  // null (internal node) comes after 'A'
+                return 0; // Both are internal or both are characters, original order remains
             });
         }
 
-        // Function to deep copy a node and its children for state storage
-        function deepCopyNode(node) {
-            if (!node) return null;
-            const newNode = new HuffmanNode(node.char, node.freq, null, null, node.id);
-            // Recursively deep copy children
-            if (node.left) {
-                newNode.left = deepCopyNode(node.left);
-            }
-            if (node.right) {
-                newNode.right = deepCopyNode(node.right);
-            }
-            return newNode;
-        }
-
-        // Function to build the Huffman tree step by step
+        // Function to build the Huffman tree steps
         function buildHuffmanTreeSteps() {
-            steps = []; // Clear previous steps
-            let nodeIdCounter = 0; // Counter for new internal node IDs
+            // Clear previous state for a fresh start
+            allNodesMap.clear();
+            steps = [];
+            let nodeIdCounter = 0;
 
-            // Create initial leaf nodes. Each is a distinct object.
+            // Create initial leaf nodes and store them in the global map
             let nodes = initialFrequencies
-                .map(item => new HuffmanNode(item.char, item.freq, null, null, `node-${nodeIdCounter++}`))
+                .map(item => {
+                    const node = new HuffmanNode(item.char, item.freq, null, null, `node-${nodeIdCounter++}`);
+                    allNodesMap.set(node.id, node);
+                    return node;
+                })
                 .sort((a, b) => a.freq - b.freq); // Initial sort by frequency
 
-            // Store initial state (deep copy of all individual nodes)
+            // Store the initial state: IDs of all current 'root' nodes
             steps.push({
-                tree: nodes.map(node => deepCopyNode(node)), // Deep copy nodes for this step
+                activeNodeIds: nodes.map(node => node.id),
                 message: 'Initial nodes sorted by frequency.',
-                highlighted: [], // No nodes highlighted initially
+                highlighted: [],
                 combinedNodes: []
             });
 
             // Continue merging until only one node remains (the root)
             while (nodes.length > 1) {
-                // Get the two lowest frequency nodes
                 const node1 = nodes.shift();
                 const node2 = nodes.shift();
 
-                // Create a new parent node. Its children are the actual node1 and node2 objects.
                 const newNode = new HuffmanNode(
-                    null, // Internal nodes don't have a specific character
+                    null, // Internal node, no specific char
                     node1.freq + node2.freq,
-                    node1, // Direct reference to the node1 object
-                    node2, // Direct reference to the node2 object
+                    node1, // Direct reference to the existing node objects
+                    node2, // Direct reference to the existing node objects
                     `node-${nodeIdCounter++}`
                 );
 
-                // Store IDs of the nodes that were just combined for highlighting
-                const highlightedIds = [node1.id, node2.id];
+                allNodesMap.set(newNode.id, newNode); // Add new node to the global map
 
-                // Add the new node back to the array and re-sort
                 nodes.push(newNode);
-                nodes = sortNodes(nodes); // Re-sort after adding the new node
+                nodes = sortNodes(nodes); // Re-sort
 
-                // Store the state for the current step (deep copy of the current 'forest' of nodes)
-                // This deep copy correctly preserves the new tree structure for this step.
+                // Store state for this step: IDs of current 'root' nodes, and highlighting info
                 steps.push({
-                    tree: nodes.map(node => deepCopyNode(node)),
+                    activeNodeIds: nodes.map(node => node.id),
                     message: `Merged '${node1.char || node1.freq}' (${node1.freq}) and '${node2.char || node2.freq}' (${node2.freq}) to form a new node with frequency ${newNode.freq}.`,
-                    highlighted: highlightedIds,
-                    combinedNodes: [newNode.id]
+                    highlighted: [node1.id, node2.id], // Nodes that were merged
+                    combinedNodes: [newNode.id] // The newly formed node
                 });
             }
 
-            // The final step is the complete tree
+            // Final step: the complete tree
             if (nodes.length === 1) {
                 steps.push({
-                    tree: nodes.map(node => deepCopyNode(node)), // Deep copy the final root
+                    activeNodeIds: nodes.map(node => node.id),
                     message: 'Huffman tree construction complete!',
                     highlighted: [],
                     combinedNodes: []
@@ -256,19 +211,108 @@
             }
         }
 
-        // Function to calculate node positions for drawing (tree builds upwards from leaves)
+        // Function to reconstruct the actual HuffmanNode objects for drawing a given step
+        // This is crucial for correctly drawing the current state of the tree(s).
+        function getNodesForDrawing(activeNodeIds) {
+            const nodesToDraw = new Map(); // Map to hold nodes for this drawing pass (id -> node object)
+            const flattenedList = [];
+
+            function traverseAndCollect(nodeId) {
+                if (!nodeId || nodesToDraw.has(nodeId)) return null; // Already collected or invalid ID
+
+                const originalNode = allNodesMap.get(nodeId);
+                if (!originalNode) {
+                    console.error(`Node with ID ${nodeId} not found in allNodesMap.`);
+                    return null;
+                }
+
+                // Create a temporary node for drawing, copying relevant properties
+                const tempNode = new HuffmanNode(
+                    originalNode.char,
+                    originalNode.freq,
+                    null, // Children will be set after recursive calls
+                    null,
+                    originalNode.id // Keep original ID for highlighting
+                );
+                nodesToDraw.set(originalNode.id, tempNode);
+                flattenedList.push(tempNode);
+
+                // Recursively set children (using direct object references from allNodesMap)
+                tempNode.left = traverseAndCollect(originalNode.left ? originalNode.left.id : null);
+                tempNode.right = traverseAndCollect(originalNode.right ? originalNode.right.id : null);
+
+                return tempNode;
+            }
+
+            // Start collecting from each active root
+            activeNodeIds.forEach(id => traverseAndCollect(id));
+
+            return flattenedList; // Return all unique, connected nodes for drawing
+        }
+
+        // Function to calculate node positions
         function calculateNodePositions(nodes) {
             const canvasWidth = canvas.width;
             const canvasHeight = canvas.height;
             const nodeRadius = 25;
-            const horizontalSpacing = 60; // Min space between nodes
-            const verticalSpacing = 70; // Space between levels
+            const horizontalNodeSpacing = 50; // Space between adjacent nodes at the same level
+            const verticalLevelSpacing = 70; // Space between levels
 
-            // Use a map to store all nodes by their ID for easy lookup
-            const nodeMap = new Map();
-            nodes.forEach(node => nodeMap.set(node.id, node));
+            let maxLevel = 0;
+            const levelQueue = [];
+            const visitedForLevel = new Set();
 
-            // Find all 'root' nodes in the current set (nodes that are not children of any other node)
+            // Find all nodes that are currently 'leaves' in the conceptual tree/forest
+            nodes.forEach(node => {
+                if (!node.left && !node.right) { // If it's a leaf node
+                    node.level = 0;
+                    levelQueue.push(node);
+                    visitedForLevel.add(node.id);
+                }
+            });
+
+            // BFS to determine levels (from leaves upwards)
+            let qIndex = 0;
+            while (qIndex < levelQueue.length) {
+                const node = levelQueue[qIndex++];
+                maxLevel = Math.max(maxLevel, node.level);
+
+                // Find parents of the current node
+                nodes.forEach(parentNode => {
+                    if ((parentNode.left && parentNode.left.id === node.id) || (parentNode.right && parentNode.right.id === node.id)) {
+                        if (!visitedForLevel.has(parentNode.id)) {
+                            parentNode.level = node.level + 1; // Parent is one level higher (upwards)
+                            levelQueue.push(parentNode);
+                            visitedForLevel.add(parentNode.id);
+                        }
+                    }
+                });
+            }
+
+            // X-positioning using post-order traversal (children first)
+            let nextAvailableX = nodeRadius + horizontalNodeSpacing; // Keep track of X for leaf placement
+            const nodeXPositions = new Map(); // Store final X positions for all nodes
+
+            function assignXPositions(node) {
+                if (!node) return;
+
+                if (node.left) assignXPositions(node.left);
+                if (node.right) assignXPositions(node.right);
+
+                if (!node.left && !node.right) { // Leaf node
+                    node.x = nextAvailableX;
+                    nextAvailableX += nodeRadius * 2 + horizontalNodeSpacing;
+                } else if (node.left && node.right) { // Internal node with two children
+                    node.x = (node.left.x + node.right.x) / 2;
+                } else if (node.left) { // Only left child (should not happen in Huffman)
+                    node.x = node.left.x;
+                } else if (node.right) { // Only right child (should not happen in Huffman)
+                    node.x = node.right.x;
+                }
+                nodeXPositions.set(node.id, node.x); // Store the calculated X
+            }
+
+            // Identify all "roots" of the current conceptual forest (nodes that are not children)
             const currentRoots = nodes.filter(node => {
                 let isChild = false;
                 for (const otherNode of nodes) {
@@ -278,88 +322,25 @@
                     }
                 }
                 return !isChild;
-            });
+            }).sort((a, b) => a.freq - b.freq); // Sort roots to maintain visual order consistency
 
-            // Calculate levels (distance from leaves) for all reachable nodes
-            let maxLevel = 0;
-            const queueForLevels = [];
-            const visitedForLevels = new Set();
+            // Apply X-positioning to each independent root
+            currentRoots.forEach(root => assignXPositions(root));
 
-            // Initialize leaves at level 0 and add to queue
+            // Apply calculated X positions to all nodes in the list
             nodes.forEach(node => {
-                if (!node.left && !node.right) {
-                    node.level = 0;
-                    queueForLevels.push(node);
-                    visitedForLevels.add(node.id);
-                }
+                node.x = nodeXPositions.get(node.id);
             });
 
-            // BFS to assign levels upwards
-            let queueIndex = 0;
-            while (queueIndex < queueForLevels.length) {
-                const node = queueForLevels[queueIndex++];
-                maxLevel = Math.max(maxLevel, node.level);
 
-                // Find parents of current node and assign levels
-                nodes.forEach(parentNode => {
-                    if ((parentNode.left && parentNode.left.id === node.id) || (parentNode.right && parentNode.right.id === node.id)) {
-                        if (!visitedForLevels.has(parentNode.id)) {
-                            parentNode.level = node.level + 1;
-                            queueForLevels.push(parentNode);
-                            visitedForLevels.add(parentNode.id);
-                        }
-                    }
-                });
-            }
-
-            // Perform post-order traversal to assign X coordinates
-            // Leaf nodes get fixed X positions, internal nodes get average of children's X
-            let currentLeafX = nodeRadius + horizontalSpacing; // Start X for leftmost leaf
-            const assignedX = new Map(); // Store assigned X positions
-
-            function assignXRecursive(node) {
-                if (!node) return;
-
-                if (node.left) assignXRecursive(node.left);
-                if (node.right) assignXRecursive(node.right);
-
-                if (!node.left && !node.right) { // Leaf node
-                    node.x = currentLeafX;
-                    currentLeafX += nodeRadius * 2 + horizontalSpacing;
-                } else if (node.left && node.right) { // Internal node with two children
-                    // Use the x coordinates already determined for children
-                    node.x = (node.left.x + node.right.x) / 2;
-                } else if (node.left) { // Should not happen in Huffman
-                    node.x = node.left.x;
-                } else if (node.right) { // Should not happen
-                    node.x = node.right.x;
-                }
-                assignedX.set(node.id, node.x); // Store X for this node
-            }
-
-            // Sort roots by character/frequency to maintain a consistent horizontal order
-            // This is important for early steps where there are multiple independent trees
-            currentRoots.sort((a, b) => {
-                if (a.char && b.char) return a.char.localeCompare(b.char);
-                if (a.char) return -1;
-                if (b.char) return 1;
-                return a.freq - b.freq;
-            }).forEach(root => {
-                assignXRecursive(root);
-            });
-
-            // Apply calculated X positions back to the actual nodes in the current step.tree
+            // Y-positioning (from bottom upwards)
+            const bottomPadding = nodeRadius + 20; // Padding from the very bottom
             nodes.forEach(node => {
-                node.x = assignedX.get(node.id);
+                // (maxLevel - node.level) ensures leaves (level 0) are at the bottom, and root (maxLevel) is at the top
+                node.y = canvasHeight - ((node.level * verticalLevelSpacing) + bottomPadding);
             });
 
-
-            // Assign Y positions (building upwards from bottom)
-            nodes.forEach(node => {
-                node.y = canvasHeight - ((node.level * verticalSpacing) + nodeRadius + 10); // Position from bottom up
-            });
-
-            // Adjust overall tree position to be centered horizontally
+            // Center the entire layout horizontally
             let minX = Infinity;
             let maxX = -Infinity;
             nodes.forEach(node => {
@@ -375,31 +356,31 @@
             });
         }
 
-
         // Function to draw the tree on canvas
         function drawTree(nodes, highlightedNodes = [], combinedNodes = []) {
             ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
 
             if (nodes.length === 0) return;
 
-            // Recalculate positions for current step's nodes
+            // Calculate positions for the current set of nodes
             calculateNodePositions(nodes);
 
-            // Draw lines first (children to parent, for upwards tree)
+            const nodeRadius = 25;
+
+            // Draw lines (children to parent, for upwards tree)
             nodes.forEach(node => {
                 if (node.left) {
                     ctx.beginPath();
                     ctx.moveTo(node.x, node.y - nodeRadius); // Start from top of parent circle
                     ctx.lineTo(node.left.x, node.left.y + nodeRadius); // Connect to bottom of child circle
-                    ctx.strokeStyle = '#64748b'; // Tailwind slate-500
+                    ctx.strokeStyle = '#64748b';
                     ctx.lineWidth = 2;
                     ctx.stroke();
 
                     // Draw '0' label for left branch
-                    ctx.fillStyle = '#334155'; // Tailwind slate-700
+                    ctx.fillStyle = '#334155';
                     ctx.font = '12px Inter';
                     ctx.textAlign = 'center';
-                    // Position label midway on the line
                     ctx.fillText('0', (node.x + node.left.x) / 2 - 10, (node.y - nodeRadius + node.left.y + nodeRadius) / 2 + 10);
                 }
                 if (node.right) {
@@ -414,7 +395,6 @@
                     ctx.fillStyle = '#334155';
                     ctx.font = '12px Inter';
                     ctx.textAlign = 'center';
-                    // Position label midway on the line
                     ctx.fillText('1', (node.x + node.right.x) / 2 + 10, (node.y - nodeRadius + node.right.y + nodeRadius) / 2 + 10);
                 }
             });
@@ -423,11 +403,10 @@
             nodes.forEach(node => {
                 const isHighlighted = highlightedNodes.includes(node.id);
                 const isCombined = combinedNodes.includes(node.id);
-                const nodeRadius = 25; // Re-define locally for use in drawing
 
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, nodeRadius, 0, Math.PI * 2);
-                ctx.fillStyle = isCombined ? '#059669' : (isHighlighted ? '#f59e0b' : '#3b82f6'); // Green for combined, orange for highlighted, blue for others
+                ctx.fillStyle = isCombined ? '#059669' : (isHighlighted ? '#f59e0b' : '#3b82f6'); /* Green for combined, orange for highlighted, blue for others */
                 ctx.strokeStyle = isCombined ? '#047857' : (isHighlighted ? '#d97706' : '#2563eb');
                 ctx.lineWidth = 2;
                 ctx.fill();
@@ -438,14 +417,12 @@
                 ctx.font = '16px Inter';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                // Position frequency slightly above the center
                 ctx.fillText(node.freq, node.x, node.y + (node.char !== null ? 8 : 0));
 
                 // Draw character (if it's a leaf node)
                 if (node.char !== null) {
                     ctx.fillStyle = 'white';
                     ctx.font = '14px Inter';
-                    // Position character slightly below the center
                     ctx.fillText(node.char, node.x, node.y - 12);
                 }
             });
@@ -455,24 +432,13 @@
         function renderStep() {
             if (currentStepIndex >= 0 && currentStepIndex < steps.length) {
                 const currentStep = steps[currentStepIndex];
-                // Pass the deep-copied tree nodes directly for drawing
+                // Get the actual connected nodes for drawing based on the current step's active node IDs
+                const nodesToDraw = getNodesForDrawing(currentStep.activeNodeIds);
+
                 stepInfoElement.innerHTML = currentStep.message;
-                // Ensure nodes array is always flattened for drawTree
-                let nodesToDraw = [];
-                const queue = [...currentStep.tree];
-                const visitedDrawing = new Set();
-                while(queue.length > 0) {
-                    const node = queue.shift();
-                    if (node && !visitedDrawing.has(node.id)) {
-                        visitedDrawing.add(node.id);
-                        nodesToDraw.push(node);
-                        if (node.left) queue.push(node.left);
-                        if (node.right) queue.push(node.right);
-                    }
-                }
                 drawTree(nodesToDraw, currentStep.highlighted, currentStep.combinedNodes);
             } else {
-                stepInfoElement.innerHTML = 'Press "Next Step" to start.';
+                stepInfoElement.innerHTML = 'Press "Next Step" to start the Huffman tree construction.';
                 ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas if no step
             }
             updateButtonStates();
@@ -502,7 +468,7 @@
 
         resetBtn.addEventListener('click', () => {
             currentStepIndex = -1; // Go back to before the first step
-            buildHuffmanTreeSteps(); // Rebuild steps to ensure fresh start
+            buildHuffmanTreeSteps(); // Rebuild steps from scratch
             renderStep();
         });
 
@@ -510,18 +476,18 @@
         window.onload = function() {
             // Set canvas dimensions dynamically for responsiveness
             const containerWidth = canvas.parentElement.offsetWidth;
-            canvas.width = containerWidth > 900 ? 900 : containerWidth - 30; // Max 900px, or container width
-            canvas.height = Math.min(window.innerHeight * 0.8, 600); // Max 80% of viewport height, or 600px
+            canvas.width = containerWidth > 900 ? 900 : containerWidth - 30;
+            canvas.height = Math.min(window.innerHeight * 0.85, 600); // Increased height slightly
 
-            buildHuffmanTreeSteps();
-            renderStep();
+            buildHuffmanTreeSteps(); // Perform the full Huffman tree construction once
+            renderStep(); // Render the initial state
         };
 
         // Handle window resize
         window.addEventListener('resize', () => {
             const containerWidth = canvas.parentElement.offsetWidth;
             canvas.width = containerWidth > 900 ? 900 : containerWidth - 30;
-            canvas.height = Math.min(window.innerHeight * 0.8, 600);
+            canvas.height = Math.min(window.innerHeight * 0.85, 600);
             renderStep(); // Redraw tree on resize
         });
 
