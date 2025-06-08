@@ -35,7 +35,7 @@
             display: block;
             width: 100%; /* Make canvas responsive */
             height: auto; /* Maintain aspect ratio */
-            max-height: 80vh; /* Increased max canvas height */
+            max-height: 85vh; /* Increased max canvas height */
         }
         .controls {
             display: flex;
@@ -111,7 +111,7 @@
         /* Responsive adjustments */
         @media (min-width: 768px) {
             .container {
-                max-width: 900px; /* Wider on desktop */
+                max-width: 1000px; /* Wider on desktop */
                 padding: 2rem;
             }
             .controls {
@@ -242,21 +242,20 @@
             const canvasWidth = canvas.width;
             const canvasHeight = canvas.height;
             const nodeRadius = 25;
-            const horizontalSpacing = 60; // Min space between nodes
+            const horizontalSpacing = 60; // Min space between sibling nodes
             const verticalSpacing = 70; // Space between levels
 
-            // Calculate tree levels and maximum depth
+            // 1. Assign levels to all nodes based on their current "roots"
             let maxLevel = 0;
             const visited = new Set();
             const queue = [];
 
-            // Find all nodes that are currently "roots" in the visualization step
+            // Identify all nodes that are currently 'roots' in the conceptual forest
             const currentRoots = nodes.filter(node => {
-                // A node is a root if it's not a child of any other node in the current set
-                return !nodes.some(otherNode => otherNode.left && (otherNode.left.id === node.id || otherNode.right.id === node.id));
+                // A node is a root if it's not a child of any other node in the *current set of active nodes*
+                return !nodes.some(otherNode => (otherNode.left && otherNode.left.id === node.id) || (otherNode.right && otherNode.right.id === node.id));
             });
 
-            // Start BFS from the current roots to determine levels
             currentRoots.forEach(root => {
                 root.level = 0;
                 queue.push(root);
@@ -279,42 +278,46 @@
                 }
             }
 
-            // Assign X positions based on inorder traversal for a balanced look
-            const levelMap = new Map(); // Map to store nodes by level
-            nodes.forEach(node => {
-                if (!levelMap.has(node.level)) {
-                    levelMap.set(node.level, []);
+            // 2. Assign initial X positions to leaves and then average for internal nodes
+            // This is done for each independent tree (root) in the current forest.
+
+            let globalNextLeafX = nodeRadius + horizontalSpacing;
+
+            // Helper function to perform post-order traversal and assign X positions
+            function assignXPositions(node) {
+                if (!node) return;
+
+                if (node.left) {
+                    assignXPositions(node.left);
                 }
-                levelMap.get(node.level).push(node);
-            });
+                if (node.right) {
+                    assignXPositions(node.right);
+                }
 
-            // Initialize x positions for leaf nodes first
-            let currentLeafX = nodeRadius + horizontalSpacing;
-            const leaves = nodes.filter(node => !node.left && !node.right);
-            leaves.sort((a,b) => { // Sort leaves to maintain a consistent order
-                if (a.char && b.char) return a.char.localeCompare(b.char);
-                return a.freq - b.freq;
-            }).forEach(leaf => {
-                leaf.x = currentLeafX;
-                currentLeafX += nodeRadius * 2 + horizontalSpacing;
-            });
-
-            // Now, iterate from deepest level up to position internal nodes
-            for (let level = maxLevel; level >= 0; level--) {
-                const nodesOnLevel = levelMap.get(level);
-                if (!nodesOnLevel) continue;
-
-                nodesOnLevel.forEach(node => {
-                    if (node.left && node.right) {
-                        // Position parent node centrally above its children
-                        node.x = (node.left.x + node.right.x) / 2;
-                    }
-                    // Y position is relative to level
-                    node.y = canvasHeight - (node.level * verticalSpacing) - nodeRadius - 10; // Position from bottom up
-                });
+                if (!node.left && !node.right) { // It's a leaf node
+                    node.x = globalNextLeafX;
+                    globalNextLeafX += nodeRadius * 2 + horizontalSpacing;
+                } else if (node.left && node.right) { // Internal node with two children
+                    node.x = (node.left.x + node.right.x) / 2;
+                } else if (node.left) { // Only left child (shouldn't happen in Huffman, but for robustness)
+                    node.x = node.left.x;
+                } else if (node.right) { // Only right child (shouldn't happen in Huffman, but for robustness)
+                    node.x = node.right.x;
+                }
             }
 
-            // Adjust overall tree position to be centered horizontally
+            // Apply assignXPositions to each independent root in the current forest
+            currentRoots.forEach(root => {
+                assignXPositions(root);
+            });
+
+
+            // 3. Assign Y positions (upside down)
+            nodes.forEach(node => {
+                node.y = (node.level * verticalSpacing) + nodeRadius + 40; // Start lower down to give space at the top
+            });
+
+            // 4. Center the entire layout horizontally
             let minX = Infinity;
             let maxX = -Infinity;
             nodes.forEach(node => {
@@ -340,35 +343,38 @@
             // Recalculate positions for current step
             calculateNodePositions(nodes);
 
-            // Draw lines first (children to parent)
+            // Draw lines first (parent to children)
             nodes.forEach(node => {
-                if (node.left) {
-                    ctx.beginPath();
-                    ctx.moveTo(node.x, node.y);
-                    ctx.lineTo(node.left.x, node.left.y + 25); // Connect to child's top
-                    ctx.strokeStyle = '#64748b'; // Tailwind slate-500
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
+                // Check if node is an internal node with children to draw lines from
+                if (node.left || node.right) {
+                    if (node.left) {
+                        ctx.beginPath();
+                        ctx.moveTo(node.x, node.y + nodeRadius); // Start from bottom of parent circle
+                        ctx.lineTo(node.left.x, node.left.y - nodeRadius); // Connect to top of child circle
+                        ctx.strokeStyle = '#64748b'; // Tailwind slate-500
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
 
-                    // Draw '0' label for left branch
-                    ctx.fillStyle = '#334155'; // Tailwind slate-700
-                    ctx.font = '12px Inter';
-                    ctx.textAlign = 'center';
-                    ctx.fillText('0', (node.x + node.left.x) / 2 - 10, (node.y + node.left.y + 25) / 2 - 10);
-                }
-                if (node.right) {
-                    ctx.beginPath();
-                    ctx.moveTo(node.x, node.y);
-                    ctx.lineTo(node.right.x, node.right.y + 25); // Connect to child's top
-                    ctx.strokeStyle = '#64748b';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
+                        // Draw '0' label for left branch
+                        ctx.fillStyle = '#334155'; // Tailwind slate-700
+                        ctx.font = '12px Inter';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('0', (node.x + node.left.x) / 2 - 10, (node.y + nodeRadius + node.left.y - nodeRadius) / 2 - 10);
+                    }
+                    if (node.right) {
+                        ctx.beginPath();
+                        ctx.moveTo(node.x, node.y + nodeRadius); // Start from bottom of parent circle
+                        ctx.lineTo(node.right.x, node.right.y - nodeRadius); // Connect to top of child circle
+                        ctx.strokeStyle = '#64748b';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
 
-                    // Draw '1' label for right branch
-                    ctx.fillStyle = '#334155';
-                    ctx.font = '12px Inter';
-                    ctx.textAlign = 'center';
-                    ctx.fillText('1', (node.x + node.right.x) / 2 + 10, (node.y + node.right.y + 25) / 2 - 10);
+                        // Draw '1' label for right branch
+                        ctx.fillStyle = '#334155';
+                        ctx.font = '12px Inter';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('1', (node.x + node.right.x) / 2 + 10, (node.y + nodeRadius + node.right.y - nodeRadius) / 2 - 10);
+                    }
                 }
             });
 
@@ -378,7 +384,7 @@
                 const isCombined = combinedNodes.includes(node.id);
 
                 ctx.beginPath();
-                ctx.arc(node.x, node.y, 25, 0, Math.PI * 2);
+                ctx.arc(node.x, node.y, nodeRadius, 0, Math.PI * 2);
                 ctx.fillStyle = isCombined ? '#059669' : (isHighlighted ? '#f59e0b' : '#3b82f6'); // Green for combined, orange for highlighted, blue for others
                 ctx.strokeStyle = isCombined ? '#047857' : (isHighlighted ? '#d97706' : '#2563eb');
                 ctx.lineWidth = 2;
@@ -390,13 +396,14 @@
                 ctx.font = '16px Inter';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(node.freq, node.x, node.y - 10);
+                // Adjust frequency and character position for upside down tree, frequency above character
+                ctx.fillText(node.freq, node.x, node.y - (node.char !== null ? 8 : 0));
 
                 // Draw character (if it's a leaf node or an internal node that shows a character)
                 if (node.char !== null) {
                     ctx.fillStyle = 'white';
                     ctx.font = '14px Inter';
-                    ctx.fillText(node.char === '_' ? 'Space' : node.char, node.x, node.y + 12);
+                    ctx.fillText(node.char, node.x, node.y + 12);
                 }
             });
         }
@@ -466,8 +473,8 @@
         window.onload = function() {
             // Set canvas dimensions dynamically for responsiveness
             const containerWidth = canvas.parentElement.offsetWidth;
-            canvas.width = containerWidth > 900 ? 900 : containerWidth - 30; // Max 900px, or container width
-            canvas.height = Math.min(window.innerHeight * 0.8, 600); // Max 80% of viewport height, or 600px
+            canvas.width = containerWidth > 1000 ? 1000 : containerWidth - 30; // Max 1000px, or container width
+            canvas.height = Math.min(window.innerHeight * 0.85, 700); // Max 85% of viewport height, or 700px
 
             buildHuffmanTreeSteps();
             renderStep();
@@ -476,12 +483,9 @@
         // Handle window resize
         window.addEventListener('resize', () => {
             const containerWidth = canvas.parentElement.offsetWidth;
-            canvas.width = containerWidth > 900 ? 900 : containerWidth - 30;
-            canvas.height = Math.min(window.innerHeight * 0.8, 600);
+            canvas.width = containerWidth > 1000 ? 1000 : containerWidth - 30;
+            canvas.height = Math.min(window.innerHeight * 0.85, 700);
             renderStep(); // Redraw tree on resize
         });
 
-    </script>
-</body>
-</html>
-
+    
