@@ -21,7 +21,7 @@
             border-radius: 1rem; /* Rounded corners */
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); /* Soft shadow */
             padding: 1.5rem;
-            max-width: 90vw; /* Max width relative to viewport */
+            max-width: 95vw; /* Increased max width */
             width: 100%;
             display: flex;
             flex-direction: column;
@@ -35,7 +35,7 @@
             display: block;
             width: 100%; /* Make canvas responsive */
             height: auto; /* Maintain aspect ratio */
-            max-height: 70vh; /* Limit canvas height */
+            max-height: 80vh; /* Increased max canvas height */
         }
         .controls {
             display: flex;
@@ -111,7 +111,7 @@
         /* Responsive adjustments */
         @media (min-width: 768px) {
             .container {
-                max-width: 800px; /* Wider on desktop */
+                max-width: 900px; /* Wider on desktop */
                 padding: 2rem;
             }
             .controls {
@@ -141,17 +141,13 @@
         const nextBtn = document.getElementById('nextBtn');
         const resetBtn = document.getElementById('resetBtn');
 
-        // Initial character frequencies as provided in the image
+        // Initial character frequencies based on the new image
         const initialFrequencies = [
-            { char: 'A', freq: 1 },
-            { char: 'G', freq: 1 },
-            { char: 'M', freq: 1 },
-            { char: 'T', freq: 1 },
-            { char: 'E', freq: 2 },
-            { char: 'H', freq: 2 },
-            { char: '_', freq: 3 }, // Space character
-            { char: 'I', freq: 3 },
-            { char: 'S', freq: 5 },
+            { char: 'A', freq: 4 },
+            { char: 'B', freq: 7 },
+            { char: 'C', freq: 3 },
+            { char: 'D', freq: 2 },
+            { char: 'E', freq: 4 },
         ];
 
         let steps = []; // Stores the state of the tree at each step
@@ -257,7 +253,7 @@
             // Find all nodes that are currently "roots" in the visualization step
             const currentRoots = nodes.filter(node => {
                 // A node is a root if it's not a child of any other node in the current set
-                return !nodes.some(otherNode => otherNode.left === node || otherNode.right === node);
+                return !nodes.some(otherNode => otherNode.left && (otherNode.left.id === node.id || otherNode.right.id === node.id));
             });
 
             // Start BFS from the current roots to determine levels
@@ -271,31 +267,20 @@
                 const node = queue.shift();
                 maxLevel = Math.max(maxLevel, node.level);
 
-                if (node.left) {
+                if (node.left && !visited.has(node.left.id)) {
                     node.left.level = node.level + 1;
-                    if (!visited.has(node.left.id)) {
-                        queue.push(node.left);
-                        visited.add(node.left.id);
-                    }
+                    queue.push(node.left);
+                    visited.add(node.left.id);
                 }
-                if (node.right) {
+                if (node.right && !visited.has(node.right.id)) {
                     node.right.level = node.level + 1;
-                    if (!visited.has(node.right.id)) {
-                        queue.push(node.right);
-                        visited.add(node.right.id);
-                    }
+                    queue.push(node.right);
+                    visited.add(node.right.id);
                 }
             }
 
             // Assign X positions based on inorder traversal for a balanced look
-            // This is complex for a dynamic tree, simpler approach: distribute evenly
-            // For a single tree, standard tree layout algorithms apply.
-            // For multiple roots (early steps), we need to layout them side-by-side.
-
-            let currentX = nodeRadius + horizontalSpacing;
             const levelMap = new Map(); // Map to store nodes by level
-
-            // Re-initialize levels for accurate horizontal positioning within a step
             nodes.forEach(node => {
                 if (!levelMap.has(node.level)) {
                     levelMap.set(node.level, []);
@@ -303,27 +288,28 @@
                 levelMap.get(node.level).push(node);
             });
 
-            // Iterate from deepest level up to position nodes
+            // Initialize x positions for leaf nodes first
+            let currentLeafX = nodeRadius + horizontalSpacing;
+            const leaves = nodes.filter(node => !node.left && !node.right);
+            leaves.sort((a,b) => { // Sort leaves to maintain a consistent order
+                if (a.char && b.char) return a.char.localeCompare(b.char);
+                return a.freq - b.freq;
+            }).forEach(leaf => {
+                leaf.x = currentLeafX;
+                currentLeafX += nodeRadius * 2 + horizontalSpacing;
+            });
+
+            // Now, iterate from deepest level up to position internal nodes
             for (let level = maxLevel; level >= 0; level--) {
                 const nodesOnLevel = levelMap.get(level);
                 if (!nodesOnLevel) continue;
-
-                // Sort nodes on this level to maintain consistent horizontal ordering
-                nodesOnLevel.sort((a, b) => {
-                    // Try to sort by char if available, otherwise by freq, or just maintain existing order
-                    if (a.char && b.char) return a.char.localeCompare(b.char);
-                    return a.freq - b.freq;
-                });
 
                 nodesOnLevel.forEach(node => {
                     if (node.left && node.right) {
                         // Position parent node centrally above its children
                         node.x = (node.left.x + node.right.x) / 2;
-                    } else {
-                        // Leaf node or root of a smaller tree in early steps
-                        node.x = currentX;
-                        currentX += nodeRadius * 2 + horizontalSpacing;
                     }
+                    // Y position is relative to level
                     node.y = canvasHeight - (node.level * verticalSpacing) - nodeRadius - 10; // Position from bottom up
                 });
             }
@@ -426,11 +412,16 @@
                 const seenNodes = new Set();
                 while (queue.length > 0) {
                     const node = queue.shift();
-                    if (node && !seenNodes.has(node.id)) {
+                    // Check if the node is valid and not already processed
+                    if (node && node.id && !seenNodes.has(node.id)) {
                         seenNodes.add(node.id);
                         nodesToDraw.push(node);
-                        if (node.left) queue.push(node.left);
-                        if (node.right) queue.push(node.right);
+                        if (node.left) {
+                            queue.push(node.left);
+                        }
+                        if (node.right) {
+                            queue.push(node.right);
+                        }
                     }
                 }
 
@@ -475,8 +466,8 @@
         window.onload = function() {
             // Set canvas dimensions dynamically for responsiveness
             const containerWidth = canvas.parentElement.offsetWidth;
-            canvas.width = containerWidth > 800 ? 800 : containerWidth - 30; // Max 800px, or container width
-            canvas.height = Math.min(window.innerHeight * 0.7, 500); // Max 70% of viewport height, or 500px
+            canvas.width = containerWidth > 900 ? 900 : containerWidth - 30; // Max 900px, or container width
+            canvas.height = Math.min(window.innerHeight * 0.8, 600); // Max 80% of viewport height, or 600px
 
             buildHuffmanTreeSteps();
             renderStep();
@@ -485,8 +476,8 @@
         // Handle window resize
         window.addEventListener('resize', () => {
             const containerWidth = canvas.parentElement.offsetWidth;
-            canvas.width = containerWidth > 800 ? 800 : containerWidth - 30;
-            canvas.height = Math.min(window.innerHeight * 0.7, 500);
+            canvas.width = containerWidth > 900 ? 900 : containerWidth - 30;
+            canvas.height = Math.min(window.innerHeight * 0.8, 600);
             renderStep(); // Redraw tree on resize
         });
 
